@@ -21,9 +21,22 @@ VirtualDJ stores playlists (`.vdjfolder`) as XML files. When you've been mixing 
 ## Requirements
 
 - **macOS** (paths default to `~/Library/Application Support/VirtualDJ`)
-- **Python 3.10+**
+- **Python 3.10+ with Tk 8.6** — see note below
 - **VirtualDJ** with a populated `database.xml`
 - Optional: [`mutagen`](https://pypi.org/project/mutagen/) for deeper local-track detection via embedded tags
+
+> **⚠️ macOS Python / Tk note**
+>
+> The **system Python** shipped with macOS (at `/Library/Developer/CommandLineTools/…`) uses Apple's deprecated Tk 8.5, which does not render the UI correctly. You need a Python installation that bundles Tk 8.6+:
+>
+> **Option A — Homebrew (recommended):**
+> ```bash
+> brew install python-tk@3.13
+> ```
+> Then use `python3.13` when creating your venv (see below).
+>
+> **Option B — python.org installer:**
+> Download the macOS package from [python.org/downloads](https://www.python.org/downloads/macos/) — it includes Tcl/Tk 8.6 out of the box.
 
 ---
 
@@ -35,7 +48,10 @@ git clone https://github.com/andymann/virtualdj-playlist-destreamer.git
 cd virtualdj-playlist-destreamer
 
 # 2. Create and activate a virtual environment
-python3 -m venv .venv
+#    macOS: use python3.13 (Homebrew) or the python.org installer, NOT the system Python
+#    See the macOS note above if you get an empty window.
+python3.13 -m venv .venv          # macOS with Homebrew python-tk
+# python3 -m venv .venv           # Linux / macOS python.org installer
 source .venv/bin/activate
 
 # 3. Install optional dependency (recommended)

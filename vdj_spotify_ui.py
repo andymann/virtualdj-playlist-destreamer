@@ -210,7 +210,12 @@ BORDER    = "#333333"
 
 
 def _apply_style(style: ttk.Style):
-    style.theme_use('clam')
+    # 'clam' supports custom colors on all platforms; fall back gracefully
+    available = style.theme_names()
+    for theme in ('clam', 'alt', 'default'):
+        if theme in available:
+            style.theme_use(theme)
+            break
     style.configure('.',
         background=BG, foreground=FG,
         fieldbackground=BG2, bordercolor=BORDER,
@@ -303,7 +308,10 @@ class App(tk.Tk):
         self.configure(bg=BG)
         self.option_add('*Font', ('Helvetica', 12))
 
-        _apply_style(ttk.Style(self))
+        try:
+            _apply_style(ttk.Style(self))
+        except Exception as exc:
+            print(f"[style] {exc} — continuing with default theme")
 
         self._db_root        = None
         self._playlist_paths = []
