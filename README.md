@@ -73,6 +73,33 @@ python vdj_spotify_ui.py
 
 ---
 
+## Building a standalone binary (optional)
+
+Use [PyInstaller](https://pyinstaller.org) to create a self-contained executable — no Python installation required on the target machine.
+
+```bash
+# 1. Activate the venv (must be the python3.13 / proper-Tk venv)
+source .venv/bin/activate
+
+# 2. Verify Tk 8.6 is bundled (should print 8.6, not 8.5)
+python -c "import tkinter; print(tkinter.TkVersion)"
+
+# 3. Install PyInstaller
+pip install pyinstaller
+
+# 4a. Single-file binary (no window, terminal hidden)
+pyinstaller --onefile --windowed vdj_spotify_ui.py
+# → dist/vdj_spotify_ui
+
+# 4b. macOS .app bundle (drag-and-drop to Applications)
+pyinstaller --onefile --windowed --name "VDJ Destreamer" vdj_spotify_ui.py
+# → dist/VDJ Destreamer.app
+```
+
+> **Note:** PyInstaller bundles the Python and Tk from the active venv. Make sure you are in the `python3.13` (Homebrew or python.org) venv — otherwise the broken macOS system Tk ends up in the binary.
+
+---
+
 ## How to use
 
 1. **Pick a playlist** from the left panel — tracks load automatically.
