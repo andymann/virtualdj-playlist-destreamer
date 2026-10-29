@@ -162,8 +162,10 @@ def get_db_meta(song: ET.Element) -> tuple:
     return author, title
 
 
-def build_local_index(db_root: ET.Element, marked_only: bool = True) -> list:
+def build_local_index(db_root: ET.Element, marked_only: bool = True) -> tuple:
+    """Returns ([(artist, title, song)], Anzahl DB-Einträge ohne existierende Datei)."""
     result = []
+    n_missing = 0
     for song in db_root.findall("Song"):
         filepath = song.get("FilePath", "")
         if not filepath:
@@ -176,31 +178,52 @@ def build_local_index(db_root: ET.Element, marked_only: bool = True) -> list:
         attribs_lower = {k.lower(): v for k, v in song.attrib.items()}
         if attribs_lower.get("netsearchid", "").strip():
             continue
+        # Verwaiste DB-Einträge (Datei gelöscht/verschoben) ignorieren
+        if not Path(filepath).is_file():
+            n_missing += 1
+            continue
         if marked_only and not has_local_marker(song):
             continue
         artist, title = get_db_meta(song)
         result.append((artist, title, song))
-    return result
+    return result, n_missing
 
 
-def find_match(sp_artist: str, sp_title: str,
-               local_tracks: list, opts: dict) -> tuple:
+def find_matches(sp_artist: str, sp_title: str,
+                 local_tracks: list, opts: dict) -> tuple:
+    """Returns ('exact'|'fuzzy'|None, [Kandidaten]) — alle Treffer, nicht nur den ersten."""
     sp_ac = artist_core_set(sp_artist, opts)
     sp_aw = {w for part in sp_ac for w in part.split() if len(w) >= 4}
-    exact_hit = fuzzy_hit = None
+    exact_hits, fuzzy_hits = [], []
     for (loc_artist, loc_title, song) in local_tracks:
         if not title_match(loc_title, sp_title, opts):
             continue
         loc_ac = artist_core_set(loc_artist, opts)
         if sp_ac & loc_ac:
-            exact_hit = song
-            break
+            exact_hits.append(song)
+            continue
         loc_aw = {w for part in loc_ac for w in part.split() if len(w) >= 4}
         if sp_aw & loc_aw:
-            fuzzy_hit = fuzzy_hit or song
-    if exact_hit is not None: return 'exact', exact_hit
-    if fuzzy_hit is not None: return 'fuzzy', fuzzy_hit
-    return None, None
+            fuzzy_hits.append(song)
+    if exact_hits: return 'exact', exact_hits
+    if fuzzy_hits: return 'fuzzy', fuzzy_hits
+    return None, []
+
+
+def candidate_info(song: ET.Element) -> tuple:
+    """(Datei, Ordner, Album, kbps, Stars, Plays) für den Auswahldialog."""
+    path  = Path(song.get("FilePath", ""))
+    tags  = song.find("Tags")
+    infos = song.find("Infos")
+    tg = lambda k: (tags.get(k,  "") if tags  is not None else "").strip()
+    ig = lambda k: (infos.get(k, "") if infos is not None else "").strip()
+    folder = str(path.parent)
+    home = str(Path.home())
+    if folder.startswith(home):
+        folder = "~" + folder[len(home):]
+    stars = tg("Stars")
+    return (path.name, folder, tg("Album"), ig("Bitrate"),
+            "★" * int(stars) if stars.isdigit() else "", ig("PlayCount"))
 
 
 # ── Styling ────────────────────────────────────────────────────────────────────
@@ -305,6 +328,98 @@ def _ask_string(parent, title: str, prompt: str, initial: str = ""):
     return result[0]
 
 
+def _ask_candidate(parent, artist: str, title: str, candidates: list,
+                   current: ET.Element, progress: str = ""):
+    """Modaler Dialog: einen von mehreren lokalen Kandidaten wählen.
+    Rückgabe: (gewählter Song oder None, skip_all)."""
+    result = [None, False]
+
+    dlg = tk.Toplevel(parent)
+    dlg.title("Lokale Datei wählen" + (f"  —  {progress}" if progress else ""))
+    dlg.configure(bg=BG)
+    dlg.transient(parent)
+    dlg.minsize(600, 200)
+
+    body = ttk.Frame(dlg, padding=10)
+    body.pack(fill='both', expand=True)
+    ttk.Label(body, text=f"{artist}  –  {title}",
+              font=('Helvetica', 13, 'bold')).pack(anchor='w')
+    ttk.Label(body, foreground=FG_DIM,
+              text=f"{len(candidates)} lokale Kandidaten gefunden — "
+                   f"welcher soll verwendet werden?").pack(anchor='w', pady=(2, 8))
+
+    # Buttons zuerst (unten) packen, damit die Liste sie nie verdrängt
+    btns = ttk.Frame(body)
+    btns.pack(side='bottom', fill='x', pady=(10, 0))
+
+    cols = ('file', 'folder', 'album', 'kbps', 'stars', 'plays')
+    frame = ttk.Frame(body)
+    frame.pack(fill='both', expand=True)
+    frame.rowconfigure(0, weight=1)
+    frame.columnconfigure(0, weight=1)
+    tree = ttk.Treeview(frame, columns=cols, show='headings', selectmode='browse',
+                        height=min(len(candidates), 8))
+    for col, hdr, w, st in [('file', 'File', 280, True), ('folder', 'Folder', 300, True),
+                            ('album', 'Album', 180, True), ('kbps', 'kbps', 50, False),
+                            ('stars', 'Stars', 60, False), ('plays', 'Plays', 50, False)]:
+        tree.heading(col, text=hdr)
+        tree.column(col, width=w, minwidth=40, stretch=st,
+                    anchor='w' if st else 'center')
+    sb = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tree.yview)
+    tree.configure(yscrollcommand=sb.set)
+    tree.grid(row=0, column=0, sticky='nsew')
+    sb.grid(row=0, column=1, sticky='ns')
+
+    iid_to_song = {}
+    for song in candidates:
+        iid = tree.insert('', 'end', values=candidate_info(song))
+        iid_to_song[iid] = song
+        if song is current:
+            tree.selection_set(iid)
+            tree.focus(iid)
+    if not tree.selection():
+        first = tree.get_children()[0]
+        tree.selection_set(first)
+        tree.focus(first)
+
+    def _ok(event=None):
+        sel = tree.selection()
+        if sel:
+            result[0] = iid_to_song[sel[0]]
+        dlg.destroy()
+
+    def _skip(event=None):
+        dlg.destroy()
+
+    def _skip_all():
+        result[1] = True
+        dlg.destroy()
+
+    ttk.Button(btns, text="Übernehmen", style='Run.TButton',
+               command=_ok).pack(side='right', padx=(6, 0))
+    ttk.Button(btns, text="Überspringen", command=_skip).pack(side='right')
+    if progress:
+        ttk.Button(btns, text="Alle überspringen",
+                   command=_skip_all).pack(side='left')
+
+    tree.bind("<Double-1>", _ok)
+    dlg.bind("<Return>", _ok)
+    dlg.bind("<Escape>", _skip)
+    dlg.protocol("WM_DELETE_WINDOW", _skip)
+
+    parent.update_idletasks()
+    px, py = parent.winfo_rootx(), parent.winfo_rooty()
+    pw, ph = parent.winfo_width(), parent.winfo_height()
+    dlg.update_idletasks()
+    dw, dh = dlg.winfo_width(), dlg.winfo_height()
+    dlg.geometry(f"+{px + max(0, (pw - dw)//2)}+{py + max(0, (ph - dh)//2)}")
+
+    tree.focus_set()
+    dlg.grab_set()
+    parent.wait_window(dlg)
+    return result[0], result[1]
+
+
 # ── Hauptfenster ───────────────────────────────────────────────────────────────
 class App(tk.Tk):
     def __init__(self):
@@ -325,6 +440,8 @@ class App(tk.Tk):
         self._current_songs  = []
         self._current_path   = None
         self._result_data    = []   # [(match_type, orig, local, iid)]
+        self._result_candidates: dict = {}   # iid -> [Songs], nur bei >1 Kandidat
+        self._result_choice:     dict = {}   # iid -> gewählter Song
 
         self._build_ui()
         self._load_db()
@@ -560,6 +677,8 @@ class App(tk.Tk):
         self._result_data       = []
         self._result_toggleable = set()
         self._result_enabled    = {}
+        self._result_candidates = {}
+        self._result_choice     = {}
         self._set_status("")
         self._analyze_btn.configure(state='disabled')
         self._progress.pack(fill='x', pady=(6, 0))
@@ -592,7 +711,7 @@ class App(tk.Tk):
         if replace_services:
             replace_services.add('streaming')
 
-        local_tracks = build_local_index(self._db_root, marked_only)
+        local_tracks, n_missing = build_local_index(self._db_root, marked_only)
         self.after(0, lambda n=len(local_tracks):
                    self._set_status(f"Matche gegen {n} Tracks …"))
 
@@ -606,33 +725,37 @@ class App(tk.Tk):
 
             if not svc:
                 rows.append(('local', song, None,
-                             ('', '💿', artist, title, '(already local)'), 'local'))
+                             ('', '💿', artist, title, '(already local)'), 'local', None))
                 n_local += 1
                 continue
 
             if svc not in replace_services:
                 icon = _SERVICE_ICON.get(svc, '🎵')
                 rows.append(('none', song, None,
-                             ('', icon, artist, title, f'({svc}, skipped)'), 'spotify'))
+                             ('', icon, artist, title, f'({svc}, skipped)'), 'spotify', None))
                 n_spotify += 1
                 continue
 
-            match_type, local_song = find_match(artist, title, local_tracks, opts)
+            match_type, candidates = find_matches(artist, title, local_tracks, opts)
 
             if match_type == 'exact':
-                fname = Path(local_song.get('FilePath', '')).name
+                local_song = candidates[0]
                 rows.append(('exact', song, local_song,
-                             ('☑', '✅', artist, title, fname), 'exact'))
+                             ('☑', '✅', artist, title,
+                              self._match_label(local_song, candidates)),
+                             'exact', candidates))
                 n_exact += 1
             elif match_type == 'fuzzy':
-                fname = Path(local_song.get('FilePath', '')).name
+                local_song = candidates[0]
                 rows.append(('fuzzy', song, local_song,
-                             ('☑', '🟡', artist, title, fname), 'fuzzy'))
+                             ('☑', '🟡', artist, title,
+                              self._match_label(local_song, candidates)),
+                             'fuzzy', candidates))
                 n_fuzzy += 1
             else:
                 icon = _SERVICE_ICON.get(svc, '🎵')
                 rows.append(('none', song, None,
-                             ('', icon, artist, title, '—'), 'spotify'))
+                             ('', icon, artist, title, '—'), 'spotify', None))
                 n_spotify += 1
 
         total  = n_exact + n_fuzzy + n_spotify + n_local
@@ -644,17 +767,50 @@ class App(tk.Tk):
             f"─────────────────\n"
             f"Gesamt         {total}\n"
             f"Library        {len(local_tracks)}"
+            + (f"\nFehlend        {n_missing}" if n_missing else "")
         )
         self.after(0, lambda: self._populate_results(rows, status))
 
     def _populate_results(self, rows, status):
-        for (match_type, orig, local, values, tag) in rows:
+        for (match_type, orig, local, values, tag, candidates) in rows:
             iid = self.result_tree.insert('', 'end', values=values, tags=(tag,))
             self._result_data.append((match_type, orig, local, iid))
             if match_type in ('exact', 'fuzzy'):
                 self._result_toggleable.add(iid)
                 self._result_enabled[iid] = True
+            if candidates and len(candidates) > 1:
+                self._result_candidates[iid] = candidates
         self._set_status(status)
+        if self._result_candidates:
+            self.after(50, self._resolve_duplicates)
+
+    @staticmethod
+    def _match_label(local: ET.Element, candidates: list) -> str:
+        fname = Path(local.get('FilePath', '')).name
+        return f"{fname}   ⧉ {len(candidates)}" if len(candidates) > 1 else fname
+
+    def _resolve_duplicates(self):
+        """Nach der Analyse: für jeden Track mit mehreren lokalen Kandidaten fragen."""
+        iids = list(self._result_candidates)
+        for n, iid in enumerate(iids, 1):
+            if not self._pick_candidate(iid, progress=f"{n} / {len(iids)}"):
+                break
+
+    def _pick_candidate(self, iid, progress: str = "") -> bool:
+        """Öffnet den Auswahldialog. Rückgabe False = 'Alle überspringen'."""
+        candidates = self._result_candidates[iid]
+        vals = list(self.result_tree.item(iid, 'values'))
+        current = self._result_choice.get(iid) or next(
+            local for (_, _, local, i) in self._result_data if i == iid)
+        chosen, skip_all = _ask_candidate(self, vals[2], vals[3], candidates,
+                                          current, progress)
+        if chosen is not None:
+            self._result_choice[iid] = chosen
+            vals[4] = self._match_label(chosen, candidates)
+            self.result_tree.item(iid, values=vals)
+            if not self._result_enabled.get(iid, True):
+                self._toggle_result(iid)
+        return not skip_all
 
     # ── Speichern ──────────────────────────────────────────────────────────────
     def _save(self):
@@ -690,6 +846,7 @@ class App(tk.Tk):
             artist = orig.get("artist", "")
             title  = orig.get("title",  "")
             swap   = self._result_enabled.get(iid, False)
+            local  = self._result_choice.get(iid, local)
 
             if match_type in ('local', 'none') or not swap:
                 el = ET.SubElement(new_root, "song")
@@ -728,6 +885,14 @@ class App(tk.Tk):
         iid = self.result_tree.identify_row(event.y)
         if not iid or iid not in self._result_toggleable:
             return
+        # Klick auf "→ Local file" bei mehreren Kandidaten öffnet die Auswahl
+        if (iid in self._result_candidates
+                and self.result_tree.identify_column(event.x) == '#5'):
+            self._pick_candidate(iid)
+            return
+        self._toggle_result(iid)
+
+    def _toggle_result(self, iid):
         enabled = not self._result_enabled.get(iid, True)
         self._result_enabled[iid] = enabled
 

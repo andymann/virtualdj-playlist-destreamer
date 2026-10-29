@@ -13,6 +13,7 @@ VirtualDJ stores playlists (`.vdjfolder`) as XML files. When you've been mixing 
 - Scans your `MyLists/*.vdjfolder` playlists
 - Matches Spotify / Tidal tracks against your `database.xml` using fuzzy title + artist normalization
 - Lets you **toggle** each match on/off before saving
+- When several local copies match one track (marked `⧉ n`), asks which file to use; click the **→ Local file** cell to change the choice later
 - Writes a new `.vdjfolder` — your originals are never modified
 - Handles umlauts, parenthetical suffixes, articles, apostrophes, trailing-g variations, single-character noise, and truncated titles
 
