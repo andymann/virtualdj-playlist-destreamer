@@ -205,9 +205,25 @@ def find_matches(sp_artist: str, sp_title: str,
         loc_aw = {w for part in loc_ac for w in part.split() if len(w) >= 4}
         if sp_aw & loc_aw:
             fuzzy_hits.append(song)
-    if exact_hits: return 'exact', exact_hits
-    if fuzzy_hits: return 'fuzzy', fuzzy_hits
+    if exact_hits: return 'exact', sorted(exact_hits, key=candidate_rank)
+    if fuzzy_hits: return 'fuzzy', sorted(fuzzy_hits, key=candidate_rank)
     return None, []
+
+
+def _stars_and_comment(song: ET.Element) -> tuple:
+    tags    = song.find("Tags")
+    stars   = (tags.get("Stars", "") if tags is not None else "").strip()
+    com_el  = song.find("Comment")
+    comment = (com_el.text or "") if com_el is not None else \
+              (tags.get("Comment", "") if tags is not None else "")
+    return (int(stars) if stars.isdigit() else 0), " ".join(comment.split())
+
+
+def candidate_rank(song: ET.Element) -> tuple:
+    """Sortierschlüssel: Rating + Comment zuerst, dann nur Rating, dann nur Comment.
+    sorted() ist stabil, innerhalb einer Gruppe bleibt die DB-Reihenfolge."""
+    stars, comment = _stars_and_comment(song)
+    return (not (stars and comment), not stars, not comment)
 
 
 def candidate_info(song: ET.Element) -> tuple:
@@ -221,12 +237,9 @@ def candidate_info(song: ET.Element) -> tuple:
     home = str(Path.home())
     if folder.startswith(home):
         folder = "~" + folder[len(home):]
-    stars = tg("Stars")
-    com_el  = song.find("Comment")
-    comment = (com_el.text or "") if com_el is not None else tg("Comment")
+    stars, comment = _stars_and_comment(song)
     return (path.name, folder, tg("Album"), ig("Bitrate"),
-            "★" * int(stars) if stars.isdigit() else "", ig("PlayCount"),
-            " ".join(comment.split()))
+            "★" * stars, ig("PlayCount"), comment)
 
 
 # ── Styling ────────────────────────────────────────────────────────────────────
