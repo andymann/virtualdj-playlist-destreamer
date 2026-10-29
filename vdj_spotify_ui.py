@@ -29,6 +29,7 @@ VDJ_BASE = Path.home() / "Library/Application Support/VirtualDJ"
 VDJ_DB   = VDJ_BASE / "database.xml"
 MYLISTS  = VDJ_BASE / "MyLists"
 YELLOW   = "16776960"
+APP_ICON = Path(__file__).resolve().parent / "icon" / "icon.png"
 
 # ── Normalisierung ─────────────────────────────────────────────────────────────
 _STRIP_PARENS   = re.compile(r'\(.*?\)|\[.*?\]')
@@ -530,6 +531,9 @@ class App(tk.Tk):
         self.minsize(900, 500)
         self.configure(bg=BG)
         self.option_add('*Font', ('Helvetica', 12))
+        if APP_ICON.exists():
+            self._icon = tk.PhotoImage(file=str(APP_ICON))
+            self.iconphoto(True, self._icon)
 
         try:
             _apply_style(ttk.Style(self))

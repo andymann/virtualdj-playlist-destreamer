@@ -89,13 +89,17 @@ python -c "import tkinter; print(tkinter.TkVersion)"
 pip install pyinstaller
 
 # 4a. Single-file binary (no window, terminal hidden)
-pyinstaller --onefile --windowed vdj_spotify_ui.py
+pyinstaller --onefile --windowed --icon icon/icon.icns \
+            --add-data "icon/icon.png:icon" vdj_spotify_ui.py
 # → dist/vdj_spotify_ui
 
 # 4b. macOS .app bundle (drag-and-drop to Applications)
-pyinstaller --onefile --windowed --name "VDJ Destreamer" vdj_spotify_ui.py
+pyinstaller --onefile --windowed --name "VDJ Destreamer" --icon icon/icon.icns \
+            --add-data "icon/icon.png:icon" vdj_spotify_ui.py
 # → dist/VDJ Destreamer.app
 ```
+
+The icon lives in `icon/`: `icon.svg` is the source, `icon.icns` is the macOS app icon, `icon.png` is used as the window/Dock icon at runtime.
 
 > **Note:** PyInstaller bundles the Python and Tk from the active venv. Make sure you are in the `python3.13` (Homebrew or python.org) venv — otherwise the broken macOS system Tk ends up in the binary.
 
