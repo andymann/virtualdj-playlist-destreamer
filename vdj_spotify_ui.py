@@ -12,6 +12,7 @@ VDJ muss geschlossen sein, wenn gespeichert wird!
 import re
 import traceback
 import threading
+import unicodedata
 import xml.etree.ElementTree as ET
 from pathlib import Path
 import tkinter as tk
@@ -210,6 +211,32 @@ def find_matches(sp_artist: str, sp_title: str,
     return None, []
 
 
+def _path_key(path: str) -> str:
+    # macOS kann Umlaute als NFC oder NFD speichern; Dateisystem ist case-insensitive
+    return unicodedata.normalize('NFC', path).casefold()
+
+
+def build_playlist_index(exclude: Path = None) -> dict:
+    """Pfad-Key -> [Playlist-Namen] über alle MyLists-Playlists (inkl. Unterordner)."""
+    index = {}
+    for f in sorted(MYLISTS.rglob("*.vdjfolder")):
+        if exclude is not None and f == exclude:
+            continue
+        name = "/".join(part.removesuffix(".subfolders")
+                        for part in f.relative_to(MYLISTS).with_suffix("").parts)
+        try:
+            root = ET.parse(f).getroot()
+        except Exception:
+            continue
+        for song in root.iter("song"):
+            path = song.get("path", "")
+            if path and not path.startswith("netsearch://"):
+                names = index.setdefault(_path_key(path), [])
+                if name not in names:
+                    names.append(name)
+    return index
+
+
 def _stars_and_comment(song: ET.Element) -> tuple:
     tags    = song.find("Tags")
     stars   = (tags.get("Stars", "") if tags is not None else "").strip()
@@ -348,11 +375,13 @@ PICKER_HEIGHT_FRACTION = 1 / 2    # Starthöhe des Auswahldialogs relativ zur Bi
 PICKER_WIDTH_FRACTION  = 0.85     # Startbreite relativ zur Bildschirmbreite
 
 
-def _ask_candidates(parent, items: list, start: int, get_current, on_choose):
+def _ask_candidates(parent, items: list, start: int, get_current, on_choose,
+                    playlists_of=lambda song: ""):
     """Modaler Dialog: für mehrere Tracks je einen lokalen Kandidaten wählen.
     items:      [(artist, title, [Kandidaten])]
     get_current(i)       -> aktuell gewählter Song für Track i
     on_choose(i, song)   -> wird aufgerufen, wenn sich die Wahl für Track i ändert
+    playlists_of(song)   -> Text für die Spalte 'In Playlists'
     ◀/▶ übernehmen die Auswahl und wechseln den Track; Überspringen wechselt ohne Übernahme."""
     pos = [start]
 
@@ -378,17 +407,23 @@ def _ask_candidates(parent, items: list, start: int, get_current, on_choose):
     btns.columnconfigure(0, weight=1, uniform='side')
     btns.columnconfigure(2, weight=1, uniform='side')
 
-    cols = ('file', 'folder', 'album', 'kbps', 'stars', 'plays', 'comment')
+    # Volle Playlist-Liste der markierten Zeile (Spalte ist oft abgeschnitten)
+    detail_lbl = ttk.Label(body, foreground=FG_DIM, anchor='w', justify='left')
+    detail_lbl.pack(side='bottom', fill='x', pady=(6, 0))
+    body.bind('<Configure>', lambda e: detail_lbl.configure(wraplength=e.width - 20))
+
+    cols = ('file', 'folder', 'album', 'kbps', 'stars', 'plays', 'comment', 'playlists')
     frame = ttk.Frame(body)
     frame.pack(fill='both', expand=True)
     frame.rowconfigure(0, weight=1)
     frame.columnconfigure(0, weight=1)
     tree = ttk.Treeview(frame, columns=cols, show='headings', selectmode='browse',
                         height=1)
-    for col, hdr, w, st in [('file', 'File', 280, True), ('folder', 'Folder', 300, True),
-                            ('album', 'Album', 180, True), ('kbps', 'kbps', 50, False),
+    for col, hdr, w, st in [('file', 'File', 240, True), ('folder', 'Folder', 240, True),
+                            ('album', 'Album', 160, True), ('kbps', 'kbps', 50, False),
                             ('stars', 'Stars', 60, False), ('plays', 'Plays', 50, False),
-                            ('comment', 'Comment', 220, True)]:
+                            ('comment', 'Comment', 200, True),
+                            ('playlists', 'In Playlists', 220, True)]:
         tree.heading(col, text=hdr)
         tree.column(col, width=w, minwidth=40, stretch=st,
                     anchor='w' if st else 'center')
@@ -412,7 +447,8 @@ def _ask_candidates(parent, items: list, start: int, get_current, on_choose):
         iid_to_song.clear()
         current = get_current(i)
         for song in candidates:
-            iid = tree.insert('', 'end', values=candidate_info(song))
+            iid = tree.insert('', 'end',
+                              values=candidate_info(song) + (playlists_of(song),))
             iid_to_song[iid] = song
             if song is current:
                 tree.selection_set(iid)
@@ -422,6 +458,14 @@ def _ask_candidates(parent, items: list, start: int, get_current, on_choose):
             tree.selection_set(first)
             tree.focus(first)
         tree.see(tree.selection()[0])
+        _update_detail()
+
+    def _update_detail(event=None):
+        sel = tree.selection()
+        names = playlists_of(iid_to_song[sel[0]]) if sel else ""
+        detail_lbl.configure(text=f"In Playlists:  {names or '—'}")
+
+    tree.bind('<<TreeviewSelect>>', _update_detail)
 
     def _apply():
         sel = tree.selection()
@@ -499,6 +543,7 @@ class App(tk.Tk):
         self._result_data    = []   # [(match_type, orig, local, iid)]
         self._result_candidates: dict = {}   # iid -> [Songs], nur bei >1 Kandidat
         self._result_choice:     dict = {}   # iid -> gewählter Song
+        self._playlist_index:    dict = {}   # Pfad-Key -> [Playlists]
 
         self._build_ui()
         self._load_db()
@@ -777,6 +822,7 @@ class App(tk.Tk):
             replace_services.add('streaming')
 
         local_tracks, n_missing = build_local_index(self._db_root, marked_only)
+        self._playlist_index = build_playlist_index(exclude=self._current_path)
         self.after(0, lambda n=len(local_tracks):
                    self._set_status(f"Matche gegen {n} Tracks …"))
 
@@ -878,7 +924,10 @@ class App(tk.Tk):
                 self._toggle_result(iid)
 
         start = iids.index(start_iid) if start_iid in iids else 0
-        _ask_candidates(self, items, start, get_current, on_choose)
+        def playlists_of(song):
+            return ", ".join(self._playlist_index.get(_path_key(song.get("FilePath", "")), []))
+
+        _ask_candidates(self, items, start, get_current, on_choose, playlists_of)
 
     # ── Speichern ──────────────────────────────────────────────────────────────
     def _save(self):
