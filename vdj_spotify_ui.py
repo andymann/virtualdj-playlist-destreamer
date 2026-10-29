@@ -331,29 +331,39 @@ def _ask_string(parent, title: str, prompt: str, initial: str = ""):
     return result[0]
 
 
-def _ask_candidate(parent, artist: str, title: str, candidates: list,
-                   current: ET.Element, progress: str = ""):
-    """Modaler Dialog: einen von mehreren lokalen Kandidaten wählen.
-    Rückgabe: (gewählter Song oder None, skip_all)."""
-    result = [None, False]
+PICKER_HEIGHT_FRACTION = 1 / 6   # Höhe des Auswahldialogs relativ zur Bildschirmhöhe
+PICKER_WIDTH           = 1000
+
+
+def _ask_candidates(parent, items: list, start: int, get_current, on_choose):
+    """Modaler Dialog: für mehrere Tracks je einen lokalen Kandidaten wählen.
+    items:      [(artist, title, [Kandidaten])]
+    get_current(i)       -> aktuell gewählter Song für Track i
+    on_choose(i, song)   -> wird aufgerufen, wenn sich die Wahl für Track i ändert
+    ◀/▶ übernehmen die Auswahl und wechseln den Track; Überspringen wechselt ohne Übernahme."""
+    pos = [start]
 
     dlg = tk.Toplevel(parent)
-    dlg.title("Lokale Datei wählen" + (f"  —  {progress}" if progress else ""))
     dlg.configure(bg=BG)
     dlg.transient(parent)
-    dlg.minsize(600, 200)
+    dlg.resizable(False, False)
+    sw, sh = dlg.winfo_screenwidth(), dlg.winfo_screenheight()
+    dw, dh = min(PICKER_WIDTH, sw - 40), int(sh * PICKER_HEIGHT_FRACTION)
 
-    body = ttk.Frame(dlg, padding=10)
+    body = ttk.Frame(dlg, padding=(10, 8))
     body.pack(fill='both', expand=True)
-    ttk.Label(body, text=f"{artist}  –  {title}",
-              font=('Helvetica', 13, 'bold')).pack(anchor='w')
-    ttk.Label(body, foreground=FG_DIM,
-              text=f"{len(candidates)} lokale Kandidaten gefunden — "
-                   f"welcher soll verwendet werden?").pack(anchor='w', pady=(2, 8))
+    head = ttk.Frame(body)
+    head.pack(fill='x', pady=(0, 6))
+    title_lbl = ttk.Label(head, font=('Helvetica', 13, 'bold'))
+    title_lbl.pack(side='left')
+    count_lbl = ttk.Label(head, foreground=FG_DIM)
+    count_lbl.pack(side='right')
 
     # Buttons zuerst (unten) packen, damit die Liste sie nie verdrängt
     btns = ttk.Frame(body)
-    btns.pack(side='bottom', fill='x', pady=(10, 0))
+    btns.pack(side='bottom', fill='x', pady=(8, 0))
+    btns.columnconfigure(0, weight=1, uniform='side')
+    btns.columnconfigure(2, weight=1, uniform='side')
 
     cols = ('file', 'folder', 'album', 'kbps', 'stars', 'plays', 'comment')
     frame = ttk.Frame(body)
@@ -361,7 +371,7 @@ def _ask_candidate(parent, artist: str, title: str, candidates: list,
     frame.rowconfigure(0, weight=1)
     frame.columnconfigure(0, weight=1)
     tree = ttk.Treeview(frame, columns=cols, show='headings', selectmode='browse',
-                        height=min(len(candidates), 8))
+                        height=1)
     for col, hdr, w, st in [('file', 'File', 280, True), ('folder', 'Folder', 300, True),
                             ('album', 'Album', 180, True), ('kbps', 'kbps', 50, False),
                             ('stars', 'Stars', 60, False), ('plays', 'Plays', 50, False),
@@ -375,53 +385,81 @@ def _ask_candidate(parent, artist: str, title: str, candidates: list,
     sb.grid(row=0, column=1, sticky='ns')
 
     iid_to_song = {}
-    for song in candidates:
-        iid = tree.insert('', 'end', values=candidate_info(song))
-        iid_to_song[iid] = song
-        if song is current:
-            tree.selection_set(iid)
-            tree.focus(iid)
-    if not tree.selection():
-        first = tree.get_children()[0]
-        tree.selection_set(first)
-        tree.focus(first)
 
-    def _ok(event=None):
+    def _show(i):
+        pos[0] = i
+        artist, title, candidates = items[i]
+        dlg.title(f"Lokale Datei wählen  —  {i + 1} / {len(items)}")
+        title_lbl.configure(text=f"{artist}  –  {title}")
+        count_lbl.configure(text=f"{len(candidates)} lokale Kandidaten")
+        nav_lbl.configure(text=f"{i + 1} / {len(items)}")
+        prev_btn.state(['!disabled'] if i > 0 else ['disabled'])
+        next_btn.state(['!disabled'] if i < len(items) - 1 else ['disabled'])
+        tree.delete(*tree.get_children())
+        iid_to_song.clear()
+        current = get_current(i)
+        for song in candidates:
+            iid = tree.insert('', 'end', values=candidate_info(song))
+            iid_to_song[iid] = song
+            if song is current:
+                tree.selection_set(iid)
+                tree.focus(iid)
+        if not tree.selection():
+            first = tree.get_children()[0]
+            tree.selection_set(first)
+            tree.focus(first)
+        tree.see(tree.selection()[0])
+
+    def _apply():
         sel = tree.selection()
-        if sel:
-            result[0] = iid_to_song[sel[0]]
+        if sel and iid_to_song[sel[0]] is not get_current(pos[0]):
+            on_choose(pos[0], iid_to_song[sel[0]])
+
+    def _go(step, apply=True):
+        if apply:
+            _apply()
+        nxt = pos[0] + step
+        if 0 <= nxt < len(items):
+            _show(nxt)
+        elif step > 0:
+            dlg.destroy()
+
+    def _close(event=None):
         dlg.destroy()
 
-    def _skip(event=None):
-        dlg.destroy()
+    ttk.Button(btns, text="Schließen", command=_close).grid(row=0, column=0, sticky='w')
+    nav = ttk.Frame(btns)
+    nav.grid(row=0, column=1)
+    prev_btn = ttk.Button(nav, text="◀", width=3, command=lambda: _go(-1))
+    prev_btn.pack(side='left')
+    nav_lbl = ttk.Label(nav, foreground=FG_DIM, width=9, anchor='center')
+    nav_lbl.pack(side='left', padx=6)
+    next_btn = ttk.Button(nav, text="▶", width=3, command=lambda: _go(1))
+    next_btn.pack(side='left')
+    right = ttk.Frame(btns)
+    right.grid(row=0, column=2, sticky='e')
+    ttk.Button(right, text="Überspringen",
+               command=lambda: _go(1, apply=False)).pack(side='left')
+    ttk.Button(right, text="Übernehmen", style='Run.TButton',
+               command=lambda: _go(1)).pack(side='left', padx=(6, 0))
 
-    def _skip_all():
-        result[1] = True
-        dlg.destroy()
+    tree.bind("<Double-1>", lambda e: _go(1))
+    dlg.bind("<Return>",    lambda e: _go(1))
+    dlg.bind("<Left>",      lambda e: _go(-1))
+    dlg.bind("<Right>",     lambda e: _go(1))
+    dlg.bind("<Escape>", _close)
+    dlg.protocol("WM_DELETE_WINDOW", _close)
 
-    ttk.Button(btns, text="Übernehmen", style='Run.TButton',
-               command=_ok).pack(side='right', padx=(6, 0))
-    ttk.Button(btns, text="Überspringen", command=_skip).pack(side='right')
-    if progress:
-        ttk.Button(btns, text="Alle überspringen",
-                   command=_skip_all).pack(side='left')
-
-    tree.bind("<Double-1>", _ok)
-    dlg.bind("<Return>", _ok)
-    dlg.bind("<Escape>", _skip)
-    dlg.protocol("WM_DELETE_WINDOW", _skip)
+    _show(start)
 
     parent.update_idletasks()
     px, py = parent.winfo_rootx(), parent.winfo_rooty()
     pw, ph = parent.winfo_width(), parent.winfo_height()
-    dlg.update_idletasks()
-    dw, dh = dlg.winfo_width(), dlg.winfo_height()
-    dlg.geometry(f"+{px + max(0, (pw - dw)//2)}+{py + max(0, (ph - dh)//2)}")
+    dlg.geometry(f"{dw}x{dh}+{px + max(0, (pw - dw)//2)}+{py + max(0, (ph - dh)//2)}")
 
     tree.focus_set()
     dlg.grab_set()
     parent.wait_window(dlg)
-    return result[0], result[1]
 
 
 # ── Hauptfenster ───────────────────────────────────────────────────────────────
@@ -801,28 +839,31 @@ class App(tk.Tk):
         fname = Path(local.get('FilePath', '')).name
         return f"{fname}   ⧉ {len(candidates)}" if len(candidates) > 1 else fname
 
-    def _resolve_duplicates(self):
-        """Nach der Analyse: für jeden Track mit mehreren lokalen Kandidaten fragen."""
+    def _resolve_duplicates(self, start_iid=None):
+        """Auswahldialog für alle Tracks mit mehreren lokalen Kandidaten."""
         iids = list(self._result_candidates)
-        for n, iid in enumerate(iids, 1):
-            if not self._pick_candidate(iid, progress=f"{n} / {len(iids)}"):
-                break
+        if not iids:
+            return
+        items = []
+        for iid in iids:
+            vals = self.result_tree.item(iid, 'values')
+            items.append((vals[2], vals[3], self._result_candidates[iid]))
+        default = {iid: local for (_, _, local, iid) in self._result_data}
 
-    def _pick_candidate(self, iid, progress: str = "") -> bool:
-        """Öffnet den Auswahldialog. Rückgabe False = 'Alle überspringen'."""
-        candidates = self._result_candidates[iid]
-        vals = list(self.result_tree.item(iid, 'values'))
-        current = self._result_choice.get(iid) or next(
-            local for (_, _, local, i) in self._result_data if i == iid)
-        chosen, skip_all = _ask_candidate(self, vals[2], vals[3], candidates,
-                                          current, progress)
-        if chosen is not None:
-            self._result_choice[iid] = chosen
-            vals[4] = self._match_label(chosen, candidates)
+        def get_current(i):
+            return self._result_choice.get(iids[i]) or default[iids[i]]
+
+        def on_choose(i, song):
+            iid = iids[i]
+            self._result_choice[iid] = song
+            vals = list(self.result_tree.item(iid, 'values'))
+            vals[4] = self._match_label(song, self._result_candidates[iid])
             self.result_tree.item(iid, values=vals)
             if not self._result_enabled.get(iid, True):
                 self._toggle_result(iid)
-        return not skip_all
+
+        start = iids.index(start_iid) if start_iid in iids else 0
+        _ask_candidates(self, items, start, get_current, on_choose)
 
     # ── Speichern ──────────────────────────────────────────────────────────────
     def _save(self):
@@ -900,7 +941,7 @@ class App(tk.Tk):
         # Klick auf "→ Local file" bei mehreren Kandidaten öffnet die Auswahl
         if (iid in self._result_candidates
                 and self.result_tree.identify_column(event.x) == '#5'):
-            self._pick_candidate(iid)
+            self._resolve_duplicates(start_iid=iid)
             return
         self._toggle_result(iid)
 
