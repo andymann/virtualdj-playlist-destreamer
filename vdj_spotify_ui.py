@@ -15,7 +15,7 @@ import threading
 import xml.etree.ElementTree as ET
 from pathlib import Path
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, font as tkfont
 
 try:
     from mutagen import File as MutagenFile
@@ -211,7 +211,7 @@ def find_matches(sp_artist: str, sp_title: str,
 
 
 def candidate_info(song: ET.Element) -> tuple:
-    """(Datei, Ordner, Album, kbps, Stars, Plays) für den Auswahldialog."""
+    """(Datei, Ordner, Album, kbps, Stars, Plays, Comment) für den Auswahldialog."""
     path  = Path(song.get("FilePath", ""))
     tags  = song.find("Tags")
     infos = song.find("Infos")
@@ -222,8 +222,11 @@ def candidate_info(song: ET.Element) -> tuple:
     if folder.startswith(home):
         folder = "~" + folder[len(home):]
     stars = tg("Stars")
+    com_el  = song.find("Comment")
+    comment = (com_el.text or "") if com_el is not None else tg("Comment")
     return (path.name, folder, tg("Album"), ig("Bitrate"),
-            "★" * int(stars) if stars.isdigit() else "", ig("PlayCount"))
+            "★" * int(stars) if stars.isdigit() else "", ig("PlayCount"),
+            " ".join(comment.split()))
 
 
 # ── Styling ────────────────────────────────────────────────────────────────────
@@ -352,7 +355,7 @@ def _ask_candidate(parent, artist: str, title: str, candidates: list,
     btns = ttk.Frame(body)
     btns.pack(side='bottom', fill='x', pady=(10, 0))
 
-    cols = ('file', 'folder', 'album', 'kbps', 'stars', 'plays')
+    cols = ('file', 'folder', 'album', 'kbps', 'stars', 'plays', 'comment')
     frame = ttk.Frame(body)
     frame.pack(fill='both', expand=True)
     frame.rowconfigure(0, weight=1)
@@ -361,7 +364,8 @@ def _ask_candidate(parent, artist: str, title: str, candidates: list,
                         height=min(len(candidates), 8))
     for col, hdr, w, st in [('file', 'File', 280, True), ('folder', 'Folder', 300, True),
                             ('album', 'Album', 180, True), ('kbps', 'kbps', 50, False),
-                            ('stars', 'Stars', 60, False), ('plays', 'Plays', 50, False)]:
+                            ('stars', 'Stars', 60, False), ('plays', 'Plays', 50, False),
+                            ('comment', 'Comment', 220, True)]:
         tree.heading(col, text=hdr)
         tree.column(col, width=w, minwidth=40, stretch=st,
                     anchor='w' if st else 'center')
@@ -573,15 +577,23 @@ class App(tk.Tk):
                                     padx=4, pady=4)
         self._status_text.pack(fill='both', expand=True)
 
-    _STATUS_LINE_H = 18   # px pro Zeile (ungefähr)
 
     def _set_status(self, msg: str):
         self._status_text.configure(state='normal')
         self._status_text.delete('1.0', tk.END)
         self._status_text.insert('1.0', msg)
         self._status_text.configure(state='disabled')
-        lines = msg.count('\n') + 1 if msg else 0
-        self._status_frame.configure(height=lines * self._STATUS_LINE_H + 8 if lines else 0)
+        if not msg:
+            self._status_frame.configure(height=0)
+            return
+        # Tatsächliche Pixelhöhe messen (Umbrüche, Emoji-Zeilen sind höher)
+        self._status_text.update_idletasks()
+        px = self._status_text.count('1.0', 'end', 'update', 'ypixels')
+        px = px[0] if isinstance(px, tuple) else px
+        if not px:
+            line_h = tkfont.Font(font=self._status_text.cget('font')).metrics('linespace')
+            px = (msg.count('\n') + 1) * line_h
+        self._status_frame.configure(height=px + 12)
 
     # Panel 4 — Result
     def _panel_result(self, root):
