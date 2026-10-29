@@ -331,8 +331,8 @@ def _ask_string(parent, title: str, prompt: str, initial: str = ""):
     return result[0]
 
 
-PICKER_HEIGHT_FRACTION = 1 / 6   # Höhe des Auswahldialogs relativ zur Bildschirmhöhe
-PICKER_WIDTH           = 1000
+PICKER_HEIGHT_FRACTION = 1 / 6    # Starthöhe des Auswahldialogs relativ zur Bildschirmhöhe
+PICKER_WIDTH_FRACTION  = 0.85     # Startbreite relativ zur Bildschirmbreite
 
 
 def _ask_candidates(parent, items: list, start: int, get_current, on_choose):
@@ -346,9 +346,9 @@ def _ask_candidates(parent, items: list, start: int, get_current, on_choose):
     dlg = tk.Toplevel(parent)
     dlg.configure(bg=BG)
     dlg.transient(parent)
-    dlg.resizable(False, False)
+    dlg.minsize(700, 150)
     sw, sh = dlg.winfo_screenwidth(), dlg.winfo_screenheight()
-    dw, dh = min(PICKER_WIDTH, sw - 40), int(sh * PICKER_HEIGHT_FRACTION)
+    dw, dh = int(sw * PICKER_WIDTH_FRACTION), int(sh * PICKER_HEIGHT_FRACTION)
 
     body = ttk.Frame(dlg, padding=(10, 8))
     body.pack(fill='both', expand=True)
@@ -455,7 +455,9 @@ def _ask_candidates(parent, items: list, start: int, get_current, on_choose):
     parent.update_idletasks()
     px, py = parent.winfo_rootx(), parent.winfo_rooty()
     pw, ph = parent.winfo_width(), parent.winfo_height()
-    dlg.geometry(f"{dw}x{dh}+{px + max(0, (pw - dw)//2)}+{py + max(0, (ph - dh)//2)}")
+    x = min(max(0, px + (pw - dw)//2), max(0, sw - dw))
+    y = min(max(0, py + (ph - dh)//2), max(0, sh - dh))
+    dlg.geometry(f"{dw}x{dh}+{x}+{y}")
 
     tree.focus_set()
     dlg.grab_set()
