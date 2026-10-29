@@ -55,6 +55,9 @@ def core(s: str, opts: dict) -> str:
     return ' '.join(s.split())
 
 
+_TRUNC_MIN_LEN = 20   # kürzerer Titel muss mind. so lang sein (gegen False Positives)
+
+
 def drop_singles(s: str) -> str:
     return ' '.join(w for w in s.split() if len(w) > 1)
 
@@ -69,6 +72,10 @@ def title_match(t1: str, t2: str, opts: dict) -> bool:
         if _dg(c1) == _dg(c2): return True
     if opts.get('drop_singles', True) and drop_singles(c1) == drop_singles(c2):
         return True
+    if opts.get('truncated', True):
+        short, long_ = sorted((c1, c2), key=len)
+        if len(short) >= _TRUNC_MIN_LEN and long_.startswith(short):
+            return True
     return False
 
 
@@ -404,6 +411,7 @@ class App(tk.Tk):
             ('collapse_spaces',   'Collapsed-space match'),
             ('trailing_g',        "Trailing-g  (dancin'=dancing)"),
             ('drop_singles',      'Drop single chars'),
+            ('truncated',         'Truncated-title match'),
         ]
         sec = ttk.LabelFrame(lf, text="Text normalization", padding=(6, 4))
         sec.pack(fill='x', pady=(0, 6))

@@ -14,7 +14,7 @@ VirtualDJ stores playlists (`.vdjfolder`) as XML files. When you've been mixing 
 - Matches Spotify / Tidal tracks against your `database.xml` using fuzzy title + artist normalization
 - Lets you **toggle** each match on/off before saving
 - Writes a new `.vdjfolder` — your originals are never modified
-- Handles umlauts, parenthetical suffixes, articles, apostrophes, trailing-g variations, and single-character noise
+- Handles umlauts, parenthetical suffixes, articles, apostrophes, trailing-g variations, single-character noise, and truncated titles
 
 ---
 
@@ -126,6 +126,7 @@ pyinstaller --onefile --windowed --name "VDJ Destreamer" vdj_spotify_ui.py
 | Collapsed-space match | `hiphop` matches `hip hop` |
 | Trailing-g | `dancin'` matches `dancing` |
 | Drop single chars | Removes stray single-character tokens |
+| Truncated-title match | Matches local titles cut off by tag/filename length limits (e.g. `… hat ne Schwest` vs. `… hat ne Schwester deren Vater …`); the shorter title must be at least 20 characters |
 | Stars / Comment only | Only considers DB tracks that have a star rating or comment (faster, fewer false positives) |
 | 🎵 Spotify / 🌊 Tidal | Choose which services to replace |
 
