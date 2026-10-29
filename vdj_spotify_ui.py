@@ -331,7 +331,7 @@ def _ask_string(parent, title: str, prompt: str, initial: str = ""):
     return result[0]
 
 
-PICKER_HEIGHT_FRACTION = 1 / 6    # Starthöhe des Auswahldialogs relativ zur Bildschirmhöhe
+PICKER_HEIGHT_FRACTION = 1 / 2    # Starthöhe des Auswahldialogs relativ zur Bildschirmhöhe
 PICKER_WIDTH_FRACTION  = 0.85     # Startbreite relativ zur Bildschirmbreite
 
 
