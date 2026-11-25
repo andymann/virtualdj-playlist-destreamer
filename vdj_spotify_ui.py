@@ -164,6 +164,19 @@ def get_db_meta(song: ET.Element) -> tuple:
     return author, title
 
 
+_DB_END = b"</VirtualDJ_Database>"
+
+
+def parse_vdj_db(path: Path) -> ET.Element:
+    """Parst database.xml. VDJ hinterlässt manchmal Reste einer älteren, längeren
+    Version hinter dem schließenden Root-Tag (inkl. NUL-Bytes) — die werden ignoriert."""
+    data = path.read_bytes()
+    end = data.find(_DB_END)
+    if end != -1:
+        data = data[:end + len(_DB_END)]
+    return ET.fromstring(data)
+
+
 def build_local_index(db_root: ET.Element, marked_only: bool = True) -> tuple:
     """Returns ([(artist, title, song)], Anzahl DB-Einträge ohne existierende Datei)."""
     result = []
@@ -733,7 +746,7 @@ class App(tk.Tk):
                 f"database.xml nicht gefunden:\n{VDJ_DB}")
             return
         try:
-            self._db_root = ET.parse(VDJ_DB).getroot()
+            self._db_root = parse_vdj_db(VDJ_DB)
         except Exception as e:
             messagebox.showerror("Fehler", f"database.xml nicht lesbar:\n{e}")
 
